@@ -3,9 +3,14 @@ import random
 import numpy as np
 import time
 import json
+import os
+import pickle
 from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
+# Use a persistent directory for game states
+GAME_STATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'game_states')
+os.makedirs(GAME_STATES_DIR, exist_ok=True)
 
 class AdvancedNeuralNetwork:
     def __init__(self, input_size=768, hidden_size1=256, hidden_size2=128, output_size=1):
@@ -200,10 +205,13 @@ class MinimaxPlayer:
             else:
                 material -= value
                 
+        # Reduce the performance impact by limiting the move calculation
+        legal_moves = list(board.legal_moves)[:20]  # Only check first 20 moves
+        
         board.push(chess.Move.null())
-        black_mobility = len(list(board.legal_moves))
+        black_mobility = min(len(list(board.legal_moves)), 20)  # Limit to 20
         board.pop()
-        white_mobility = len(list(board.legal_moves))
+        white_mobility = len(legal_moves)
         mobility = white_mobility - black_mobility
         random_noise = random.uniform(-10, 10)
         
@@ -217,9 +225,15 @@ class MinimaxPlayer:
         if depth == 0 or board.is_game_over():
             return self.evaluate_board(board)
         
+        # Limit the number of moves to evaluate for performance
+        legal_moves = list(board.legal_moves)
+        if len(legal_moves) > 10 and depth > 1:
+            # For deeper depths, only evaluate the most promising 10 moves
+            legal_moves = legal_moves[:10]
+        
         if maximizing_player:
             max_eval = float('-inf')
-            for move in board.legal_moves:
+            for move in legal_moves:
                 board.push(move)
                 eval = self.minimax(board, depth - 1, alpha, beta, False)
                 board.pop()
@@ -230,7 +244,7 @@ class MinimaxPlayer:
             return max_eval
         else:
             min_eval = float('inf')
-            for move in board.legal_moves:
+            for move in legal_moves:
                 board.push(move)
                 eval = self.minimax(board, depth - 1, alpha, beta, True)
                 board.pop()
@@ -247,7 +261,23 @@ class MinimaxPlayer:
         alpha = float('-inf')
         beta = float('inf')
         
-        for move in board.legal_moves:
+        # Add a time limit for move calculation
+        start_time = time.time()
+        max_time = 10.0  # 10 seconds max per move
+        
+        legal_moves = list(board.legal_moves)
+        # Shuffle moves for variety
+        random.shuffle(legal_moves)
+        
+        # For performance, limit number of moves to consider at root
+        if len(legal_moves) > 12:
+            legal_moves = legal_moves[:12]
+            
+        for move in legal_moves:
+
+            if time.time() - start_time > max_time:
+                break
+                
             board.push(move)
             value = self.minimax(board, self.depth - 1, alpha, beta, not board.turn)
             board.pop()
@@ -287,10 +317,13 @@ class NeuralNetworkPlayer:
     def minimax_search(self, board, depth, alpha, beta, maximizing_player):
         if depth == 0 or board.is_game_over():
             return self.evaluate_position(board)
+        legal_moves = list(board.legal_moves)
+        if len(legal_moves) > 10 and depth > 0:
+            legal_moves = legal_moves[:10]
         
         if maximizing_player:
             max_eval = float('-inf')
-            for move in board.legal_moves:
+            for move in legal_moves:
                 board.push(move)
                 eval = self.minimax_search(board, depth - 1, alpha, beta, False)
                 board.pop()
@@ -301,7 +334,7 @@ class NeuralNetworkPlayer:
             return max_eval
         else:
             min_eval = float('inf')
-            for move in board.legal_moves:
+            for move in legal_moves:
                 board.push(move)
                 eval = self.minimax_search(board, depth - 1, alpha, beta, True)
                 board.pop()
@@ -318,10 +351,19 @@ class NeuralNetworkPlayer:
         alpha = float('-inf')
         beta = float('inf')
         
+        start_time = time.time()
+        max_time = 10.0 
+        
         legal_moves = list(board.legal_moves)
         random.shuffle(legal_moves)
         
+        if len(legal_moves) > 12:
+            legal_moves = legal_moves[:12]
+        
         for move in legal_moves:
+            if time.time() - start_time > max_time:
+                break
+                
             board.push(move)
             
             if self.depth > 0:
@@ -400,7 +442,6 @@ def play_game_step(board, minimax_player, nn_player, move_history):
     
     board.push(move)
     move_history.append(move_data)
-    
     minimax_eval = minimax_player.evaluate_board(board)
     nn_eval = nn_player.evaluate_position(board)
     
@@ -422,6 +463,27 @@ def play_game_step(board, minimax_player, nn_player, move_history):
     
     return response
 
+def save_game_state(game_id, game_state):
+    board = game_state.pop("board")
+    board_fen = board.fen()
+    game_state["board_fen"] = board_fen
+    
+    with open(os.path.join(GAME_STATES_DIR, f"{game_id}.pkl"), "wb") as f:
+        pickle.dump(game_state, f)
+    game_state["board"] = board
+    del game_state["board_fen"]
+
+def load_game_state(game_id):
+    try:
+        with open(os.path.join(GAME_STATES_DIR, f"{game_id}.pkl"), "rb") as f:
+            game_state = pickle.load(f)
+        board_fen = game_state.pop("board_fen")
+        game_state["board"] = chess.Board(board_fen)
+        
+        return game_state
+    except (FileNotFoundError, KeyError):
+        return None
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -433,12 +495,11 @@ def start_game():
     minimax_depth = int(data.get('minimax_depth', 3))
     nn_depth = int(data.get('nn_depth', 2))
     max_moves = int(data.get('max_moves', 50))
-    
-    if minimax_depth < 1 or minimax_depth > 6:
+    if minimax_depth < 1 or minimax_depth > 4:
         minimax_depth = 3
-    if nn_depth < 0 or nn_depth > 3:
+    if nn_depth < 0 or nn_depth > 2:
         nn_depth = 2
-    if max_moves < 1 or max_moves > 200:
+    if max_moves < 1 or max_moves > 100:
         max_moves = 50
     
     board = chess.Board()
@@ -457,7 +518,7 @@ def start_game():
         "start_time": time.time()
     }
     
-    app.config[f'game_{game_id}'] = game_state
+    save_game_state(game_id, game_state)
     
     return jsonify({
         "game_id": game_id,
@@ -471,7 +532,7 @@ def start_game():
 
 @app.route('/api/next_move/<game_id>', methods=['GET'])
 def next_move(game_id):
-    game_state = app.config.get(f'game_{game_id}')
+    game_state = load_game_state(game_id)
     
     if not game_state:
         return jsonify({"error": "Game not found"}), 404
@@ -490,17 +551,22 @@ def next_move(game_id):
             "move_history": move_history
         })
     
-    response = play_game_step(board, white_player, black_player, move_history)
-    game_state["move_count"] += 1
-    
-    response["move_count"] = game_state["move_count"]
-    response["game_over"] = board.is_game_over() or game_state["move_count"] >= max_moves
-    
-    return jsonify(response)
+    try:
+        response = play_game_step(board, white_player, black_player, move_history)
+        game_state["move_count"] += 1
+        
+        response["move_count"] = game_state["move_count"]
+        response["game_over"] = board.is_game_over() or game_state["move_count"] >= max_moves
+        save_game_state(game_id, game_state)
+        
+        return jsonify(response)
+    except Exception as e:
+        app.logger.error(f"Error in next_move: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/game_state/<game_id>', methods=['GET'])
 def game_state(game_id):
-    game_state = app.config.get(f'game_{game_id}')
+    game_state = load_game_state(game_id)
     
     if not game_state:
         return jsonify({"error": "Game not found"}), 404
@@ -521,9 +587,9 @@ def game_state(game_id):
 @app.route('/api/auto_play/<game_id>', methods=['POST'])
 def auto_play(game_id):
     data = request.get_json()
-    moves_to_play = int(data.get('moves', 1))
+    moves_to_play = min(int(data.get('moves', 1)), a10)  
     
-    game_state = app.config.get(f'game_{game_id}')
+    game_state = load_game_state(game_id)
     
     if not game_state:
         return jsonify({"error": "Game not found"}), 404
@@ -540,13 +606,18 @@ def auto_play(game_id):
         if board.is_game_over() or game_state["move_count"] >= max_moves:
             break
             
-        response = play_game_step(board, white_player, black_player, move_history)
-        game_state["move_count"] += 1
-        
-        response["move_count"] = game_state["move_count"]
-        response["game_over"] = board.is_game_over() or game_state["move_count"] >= max_moves
-        
-        results.append(response)
+        try:
+            response = play_game_step(board, white_player, black_player, move_history)
+            game_state["move_count"] += 1
+            
+            response["move_count"] = game_state["move_count"]
+            response["game_over"] = board.is_game_over() or game_state["move_count"] >= max_moves
+            
+            results.append(response)
+        except Exception as e:
+            app.logger.error(f"Error in auto_play: {str(e)}")
+            break
+    save_game_state(game_id, game_state)
     
     return jsonify({
         "moves_played": len(results),
