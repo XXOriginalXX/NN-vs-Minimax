@@ -587,7 +587,7 @@ def game_state(game_id):
 @app.route('/api/auto_play/<game_id>', methods=['POST'])
 def auto_play(game_id):
     data = request.get_json()
-    moves_to_play = min(int(data.get('moves', 1)), a10)  
+    moves_to_play = min(int(data.get('moves', 1)), 50)  
     
     game_state = load_game_state(game_id)
     
