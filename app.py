@@ -586,45 +586,50 @@ def game_state(game_id):
 
 @app.route('/api/auto_play/<game_id>', methods=['POST'])
 def auto_play(game_id):
-    data = request.get_json()
-    moves_to_play = min(int(data.get('moves', 1)), 50)  
-    
-    game_state = load_game_state(game_id)
-    
-    if not game_state:
-        return jsonify({"error": "Game not found"}), 404
-    
-    board = game_state["board"]
-    white_player = game_state["white_player"]
-    black_player = game_state["black_player"]
-    move_history = game_state["move_history"]
-    max_moves = game_state["max_moves"]
-    
-    results = []
-    
-    for _ in range(moves_to_play):
-        if board.is_game_over() or game_state["move_count"] >= max_moves:
-            break
-            
-        try:
-            response = play_game_step(board, white_player, black_player, move_history)
-            game_state["move_count"] += 1
-            
-            response["move_count"] = game_state["move_count"]
-            response["game_over"] = board.is_game_over() or game_state["move_count"] >= max_moves
-            
-            results.append(response)
-        except Exception as e:
-            app.logger.error(f"Error in auto_play: {str(e)}")
-            break
-    save_game_state(game_id, game_state)
-    
-    return jsonify({
-        "moves_played": len(results),
-        "results": results,
-        "game_over": board.is_game_over() or game_state["move_count"] >= max_moves,
-        "status": get_game_status(board)
-    })
+    try:
+        data = request.get_json()
+        moves_to_play = min(int(data.get('moves', 1)), 50)  # Set a reasonable maximum limit
+        
+        game_state = load_game_state(game_id)
+        
+        if not game_state:
+            return jsonify({"error": "Game not found"}), 404
+        
+        board = game_state["board"]
+        white_player = game_state["white_player"]
+        black_player = game_state["black_player"]
+        move_history = game_state["move_history"]
+        max_moves = game_state["max_moves"]
+        
+        results = []
+        
+        for _ in range(moves_to_play):
+            if board.is_game_over() or game_state["move_count"] >= max_moves:
+                break
+                
+            try:
+                response = play_game_step(board, white_player, black_player, move_history)
+                game_state["move_count"] += 1
+                
+                response["move_count"] = game_state["move_count"]
+                response["game_over"] = board.is_game_over() or game_state["move_count"] >= max_moves
+                
+                results.append(response)
+            except Exception as e:
+                app.logger.error(f"Error in auto_play move: {str(e)}")
+                break
+                
+        save_game_state(game_id, game_state)
+        
+        return jsonify({
+            "moves_played": len(results),
+            "results": results,
+            "game_over": board.is_game_over() or game_state["move_count"] >= max_moves,
+            "status": get_game_status(board)
+        })
+    except Exception as e:
+        app.logger.error(f"Error in auto_play: {str(e)}")
+        return jsonify({"error": str(e), "detail": "An error occurred during auto-play"}), 500
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080, debug=True)
