@@ -18,8 +18,8 @@ Experience the battle of AI strategies in real-time:
 - **Configurable Parameters**:
   - Adjustable search depth for Minimax
   - Customizable neural network architecture
+[Watch the demo video](https://www.youtube.com/watch?v=PbY9SGMOcZU)
 
-<iframe width="560" height="315" src="https://youtu.be/PbY9SGMOcZU" frameborder="0" allowfullscreen></iframe>
 
 
 ### Technologies Used
